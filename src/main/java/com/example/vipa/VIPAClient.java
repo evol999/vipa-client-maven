@@ -47,12 +47,51 @@ public class VIPAClient {
                     System.out.println("Unexpected first frame: " + bytesToHex(first));
                 }
             }
-
-            // Send Start Transaction example
-            byte[] startTx = buildStartTransactionExample();
-            System.out.println("<< Sending Start Transaction: " + bytesToHex(startTx));
+            // Enable card detection
+            byte[] startTx = enableCardStatus();
+            System.out.println("<< Enable Card Status: " + bytesToHex(startTx));
             out.write(startTx);
             out.flush();
+            
+            // Read responses and react
+//            while (true)
+            {
+                byte[] frame = readVipaFrame(in);
+                if (frame == null) {
+                    System.out.println("Connection closed by remote.");
+                }
+                System.out.println(">> Received: " + bytesToHex(frame));
+                // Minimal parsing
+                if (frame.length >= 5) {
+                    int cla = frame[3] & 0xFF;
+                    int ins = frame[4] & 0xFF;
+                    if (cla == 0xDE && (ins == 0xD1 || ins == 0xD2 || ins == 0xE2)) {
+                        // EMV response / decision required
+                        handleEmvResponse(frame, out);
+                    } else {
+                        // generic print
+                        System.out.println("Frame CLA=0x" + String.format("%02X", frame[3]) +
+                                           " INS=0x" + (frame.length>4?String.format("%02X", frame[4]):"??"));
+                    }
+                } else {
+                    System.out.println("Received too-short frame: " + bytesToHex(frame));
+                }
+            }
+            
+
+            // Send display Insert Card
+//            byte[] startTx = displayInsertCard();
+            startTx = displayInsertCard();
+            System.out.println("<< Sending Display Card: " + bytesToHex(startTx));
+            out.write(startTx);
+            out.flush();
+            
+
+            // Send Start Transaction example
+//            byte[] startTx = buildStartTransactionExample();
+//            System.out.println("<< Sending Start Transaction: " + bytesToHex(startTx));
+//            out.write(startTx);
+//            out.flush();
 
             // Read responses and react
             while (true) {
@@ -127,6 +166,64 @@ public class VIPAClient {
         return buf;
     }
 
+    // *************** Commands ****************
+    private static byte[] enableCardStatus() throws IOException {
+        ByteArrayOutputStream bout = new ByteArrayOutputStream();
+
+        bout.write(0x01); // NAD
+        bout.write(0x00); // PCB
+
+        // D0 60 01 01
+        byte[] apdu = new byte[] {
+            (byte) 0xD0,
+            (byte) 0x60,
+            (byte) 0x01,
+            (byte) 0x01
+        };
+
+        bout.write(apdu.length);  // LEN
+        bout.write(apdu);
+
+        // LRC
+        byte lrc = 0;
+        for (byte b : bout.toByteArray()) lrc ^= b;
+        bout.write(lrc);
+
+        return bout.toByteArray();
+    }
+    
+    private static byte[] displayInsertCard() throws IOException {
+        ByteArrayOutputStream bout = new ByteArrayOutputStream();
+
+        // NAD, PCB
+        bout.write(0x01);   // NAD
+        bout.write(0x00);   // PCB
+
+        // The APDU: D2 01 0D 01
+        byte[] apdu = new byte[] {
+            (byte) 0xD2, // CLA
+            (byte) 0x01, // INS = Display
+            (byte) 0x0D, // P1 = screen index 0x0D = Insert Card
+            (byte) 0x01  // P2 = backlight ON
+        };
+
+        // LEN = APDU length
+        bout.write(apdu.length);
+
+        // Write APDU content
+        bout.write(apdu);
+
+        // Compute LRC = XOR of all bytes (except LRC itself)
+        byte lrc = 0;
+        for (byte b : bout.toByteArray()) {
+            lrc ^= b;
+        }
+        bout.write(lrc);
+
+        return bout.toByteArray();
+    }
+
+    
     // *************** Frame builders ****************
 
     private static byte[] buildStartTransactionExample() {
