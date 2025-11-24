@@ -36,6 +36,13 @@ public class VIPAClient {
 
 			readVipaAnswer(in, out);
 
+			// Send display Text
+//			commandTx = buildDisplayInsertCard("Welcome");
+//			System.out.println("<< Welcome " + bytesToHex(commandTx));
+//			writeVipaCommand(out, commandTx);
+			
+			//readVipaAnswer(in, out);
+
 			// Send display Insert Card
 			commandTx = buildDisplayInsertCard();
 			System.out.println("<< 2. Sending Display Card: " + bytesToHex(commandTx));
@@ -86,6 +93,62 @@ public class VIPAClient {
 			System.err.println("I/O error: " + e.getMessage());
 		}
 	}
+
+	private byte[] buildDisplayInsertCard(String string) {
+		// Build a Start Transaction [DE, D1] similar to spec Example 37
+		ByteArrayOutputStream bout = new ByteArrayOutputStream();
+		bout.write(0x01); // NAD
+		bout.write(0x00); // PCB
+
+		ByteArrayOutputStream body = new ByteArrayOutputStream();
+		body.write(0xD2); // CLA
+		body.write(0x02); // INS
+		body.write(0x00); // P1
+		body.write(0x00); // P2
+
+		// Build E0 template
+		ByteArrayOutputStream e0 = new ByteArrayOutputStream();
+		// DF8104 - sample
+		e0.write(0xDF);
+		e0.write(0x81);
+		e0.write(0x04);
+		try {
+			e0.write(string.getBytes());
+		} catch (IOException ignored) {
+		}
+
+		// Wrap E0 with header and trailer bytes (01 00)
+		byte[] e0b = e0.toByteArray();
+		ByteArrayOutputStream data = new ByteArrayOutputStream();
+		data.write(0xE0);
+		data.write(e0b.length + 2); // plus trailer bytes
+		try {
+			data.write(e0b);
+			data.write(0x01);
+			data.write(0x00);
+		} catch (IOException ignored) {
+		}
+
+		byte[] dataBytes = data.toByteArray();
+		body.write((byte) dataBytes.length);
+		try {
+			body.write(dataBytes);
+		} catch (IOException ignored) {
+		}
+
+		byte[] bodyBytes = body.toByteArray();
+		// len = number of bytes AFTER LEN and BEFORE LRC
+		int len = bodyBytes.length;
+		bout.write((byte) len);
+		try {
+			bout.write(bodyBytes);
+		} catch (IOException ignored) {
+		}
+
+		byte lrc = computeLRC(bout.toByteArray());
+		bout.write(lrc & 0xFF);
+
+		return bout.toByteArray();	}
 
 	private void handleEmvResponse(byte[] frame, OutputStream out) throws IOException {
 		// Extract TLV payload (from offset 3 up to last-1 (excluding LRC))
