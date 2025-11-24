@@ -217,6 +217,8 @@ public class VIPAClient {
 					System.out.println("OK continue: ");
 				} else if (cla == 0xE2 || cla == 0x90) {
 					handleEmvResponse(commandRx, out);
+				} else if (cla == 0xE6) {
+					System.out.println("Received: " + extractC4ToC5String(commandRx));
 				} else {
 					System.out.println("Unexpected first frame: " + bytesToHex(commandRx));
 				}
@@ -244,6 +246,7 @@ public class VIPAClient {
 			// Check if any data is immediately available
 			if (in.available() > 0) {
 				retVal = true;
+				System.out.println();
 				System.out.println(event);
 				break;
 			}
@@ -455,6 +458,40 @@ public class VIPAClient {
 
 		return bout.toByteArray();
 	}
+	
+    public static String extractC4ToC5String(byte[] commandRx) throws IOException {
+        if (commandRx == null) {
+            throw new IllegalArgumentException("Input byte array cannot be null");
+        }
+        
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        boolean foundC4 = false;
+        boolean foundC5 = false;
+        
+        for (int i = 0; i < commandRx.length && !foundC5; i++) {
+            byte b = commandRx[i];
+            
+            if (foundC4) {
+                if (b == (byte) 0xC5) {
+                    foundC5 = true;
+                } else {
+                    buffer.write(b);
+                }
+            } else if (b == (byte) 0xC4) {
+                foundC4 = true;
+            }
+        }
+        
+        if (!foundC4) {
+            throw new IOException("C4 marker not found in byte array");
+        }
+        
+        if (!foundC5) {
+            throw new IOException("C5 marker not found in byte array");
+        }
+        
+        return buffer.toString("UTF-8");
+    }
 
 	private static byte computeLRC(byte[] bytes) {
 		byte x = 0;
