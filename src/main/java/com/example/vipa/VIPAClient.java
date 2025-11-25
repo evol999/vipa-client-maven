@@ -2,6 +2,9 @@ package com.example.vipa;
 
 import java.io.*;
 import java.net.Socket;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 
 /**
@@ -28,6 +31,7 @@ public class VIPAClient {
 	}
 
 	public void run() {
+		boolean continueTx = true;
 		try (Socket socket = new Socket(host, port)) {
 			System.out.println("<< 1. Connected to VIPA terminal " + host + ":" + port);
 			InputStream in = socket.getInputStream();
@@ -40,8 +44,8 @@ public class VIPAClient {
 //			commandTx = buildDisplayInsertCard("Welcome");
 //			System.out.println("<< Welcome " + bytesToHex(commandTx));
 //			writeVipaCommand(out, commandTx);
-			
-			//readVipaAnswer(in, out);
+
+			// readVipaAnswer(in, out);
 
 			// Send display Insert Card
 			commandTx = buildDisplayInsertCard();
@@ -58,21 +62,21 @@ public class VIPAClient {
 			readVipaAnswer(in, out);
 
 			try {
-				waitForUser(in, "card inserted");
+				waitForUser(in, "user", "card inserted");
 			} catch (InterruptedException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 
 			// Send Start Transaction example
-			commandTx = buildStartTransactionExample();
+			commandTx = buildStartTransaction();
 			System.out.println("<< 4. Sending Start Transaction: " + bytesToHex(commandTx));
 			writeVipaCommand(out, commandTx);
 
 			readVipaAnswer(in, out);
 
 			try {
-				waitForUser(in, "Terminal responded");
+				waitForUser(in, "Terminal", "Terminal responded");
 			} catch (InterruptedException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
@@ -80,14 +84,48 @@ public class VIPAClient {
 
 			readVipaAnswer(in, out);
 
-			// Continue Transaction
-			commandTx = buildContinueTransaction(decision, null);
-			System.out.println("<< 5. Continue Transaction: " + bytesToHex(commandTx));
-			writeVipaCommand(out, commandTx);
-
-			while (true) {
-				readVipaAnswer(in, out);
+			try {
+				waitForUser(in, "Terminal", "Terminal responded");
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
 			}
+			readVipaAnswer(in, out);
+
+			try {
+				waitForUser(in, "PIN entry", "PIN entered");
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			readVipaAnswer(in, out);
+
+			// Continue Transaction
+//			commandTx = buildContinueTransaction(decision, null);
+//			System.out.println("<< 5. Continue Transaction: " + bytesToHex(commandTx));
+//			writeVipaCommand(out, commandTx);
+
+			try {
+				waitForUser(in, "Terminal", "Done");
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			continueTx = readVipaAnswer(in, out);
+
+			if (continueTx) {
+				// Simulate host response
+				commandTx = buildHostResponse(decision, null);
+				System.out.println("<< 6. Sending Host response: " + bytesToHex(commandTx));
+				writeVipaCommand(out, commandTx);
+			} else {
+				System.out.println("Transaction ENDED");
+			}
+
+			// Continue Transaction
+//			commandTx = buildContinueTransaction(decision, null);
+//			System.out.println("<< 6. Continue Transaction: " + bytesToHex(commandTx));
+//			writeVipaCommand(out, commandTx);
 
 		} catch (IOException e) {
 			System.err.println("I/O error: " + e.getMessage());
@@ -148,7 +186,8 @@ public class VIPAClient {
 		byte lrc = computeLRC(bout.toByteArray());
 		bout.write(lrc & 0xFF);
 
-		return bout.toByteArray();	}
+		return bout.toByteArray();
+	}
 
 	private void handleEmvResponse(byte[] frame, OutputStream out) throws IOException {
 		// Extract TLV payload (from offset 3 up to last-1 (excluding LRC))
@@ -198,8 +237,9 @@ public class VIPAClient {
 		return buf;
 	}
 
-	private void readVipaAnswer(InputStream in, OutputStream out) throws IOException {
+	private boolean readVipaAnswer(InputStream in, OutputStream out) throws IOException {
 		// After connecting, read unsolicited wake-up frame first
+		boolean continueTx = true;
 		byte[] commandRx = readVipaFrame(in);
 		if (commandRx != null) {
 			System.out.println(">> Received: " + bytesToHex(commandRx));
@@ -217,17 +257,29 @@ public class VIPAClient {
 					System.out.println("OK continue: ");
 				} else if (cla == 0xE2 || cla == 0x90) {
 					handleEmvResponse(commandRx, out);
+				} else if (cla == 0xE4) {
+					System.out.println("Post PIN entry: " + decodeTLV(commandRx));
+					handleEmvResponse(commandRx, out);
+				} else if (cla == 0xE5) {
+					System.out.println("TRANSACTION DECLINED: " + decodeTLV(commandRx));
+					continueTx = false;
 				} else if (cla == 0xE6) {
 					System.out.println("Received: " + extractC4ToC5String(commandRx));
 				} else {
 					System.out.println("Unexpected first frame: " + bytesToHex(commandRx));
 				}
 			} else {
+				continueTx = false;
 				System.out.println("Received too-short frame: " + bytesToHex(commandRx));
 			}
 		} else {
 			System.out.println("Connection closed by remote.");
 		}
+		return continueTx;
+	}
+
+	private String decodeTLV(byte[] commandRx) {
+		return "";
 	}
 
 	private void writeVipaCommand(OutputStream out, byte[] commandTx) throws IOException {
@@ -236,11 +288,11 @@ public class VIPAClient {
 		out.flush();
 	}
 
-	private boolean waitForUser(InputStream in, String event) throws IOException, InterruptedException {
+	private boolean waitForUser(InputStream in, String actor, String event) throws IOException, InterruptedException {
 		boolean retVal = false;
 		long startTime = System.currentTimeMillis();
 
-		System.out.println("waiting for user");
+		System.out.println("waiting for " + actor);
 		while (System.currentTimeMillis() - startTime < 30000) {
 			System.out.print(".");
 			// Check if any data is immediately available
@@ -308,7 +360,7 @@ public class VIPAClient {
 		return bout.toByteArray();
 	}
 
-	private static byte[] buildStartTransactionExample() {
+	private static byte[] buildStartTransaction() {
 		// Build a Start Transaction [DE, D1] similar to spec Example 37
 		ByteArrayOutputStream bout = new ByteArrayOutputStream();
 		bout.write(0x01); // NAD
@@ -325,16 +377,41 @@ public class VIPAClient {
 		// 9A (date) 03 YY MM DD - sample
 		e0.write(0x9A);
 		e0.write(0x03);
-		e0.write(0x01);
-		e0.write(0x12);
-		e0.write(0x25);
+//		e0.write(0x01);
+//		e0.write(0x12);
+//		e0.write(0x25);
+		// Get current date
+		LocalDate currentDate = LocalDate.now();
+
+		// Format as YYMMDD
+		DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyMMdd");
+		String dateString = currentDate.format(formatter);
+		try {
+			e0.write(hexStringToBytes(dateString));
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
 		// 9F21 (time) 03 HH MM SS
 		e0.write(0x9F);
 		e0.write(0x21);
 		e0.write(0x03);
-		e0.write(0x12);
-		e0.write(0x30);
-		e0.write(0x00);
+//		e0.write(0x12);
+//		e0.write(0x30);
+//		e0.write(0x00);
+		// Get current time
+		LocalDateTime currentTime = LocalDateTime.now();
+
+		// Add time in HHMMSS format
+		DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HHmmss");
+		String timeString = currentTime.format(timeFormatter);
+		try {
+			e0.write(hexStringToBytes(timeString));
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 		// 9C Transaction type
 		e0.write(0x9C);
 		e0.write(0x01);
@@ -412,6 +489,81 @@ public class VIPAClient {
 				tlvs.write(0x02);
 				tlvs.write(0x30);
 				tlvs.write(0x30);
+//				byte[] iad = hexStringToBytes("11223344556677889900");
+//				tlvs.write(0x91);
+//				tlvs.write(iad.length);
+//				tlvs.write(iad);
+				tlvs.write(incomingPayload);
+				break;
+			case APPROVE_ONLINE:
+				tlvs.write(0x8A);
+				tlvs.write(0x02);
+				tlvs.write(0x30);
+				tlvs.write(0x30);
+				byte[] iad2 = hexStringToBytes("8877665544332211AABB");
+				tlvs.write(0x91);
+				tlvs.write(iad2.length);
+				tlvs.write(iad2);
+				byte[] script = hexStringToBytes("860F842400000000010000000000000000");
+				tlvs.write(0x71);
+				tlvs.write(script.length);
+				tlvs.write(script);
+				break;
+			case MINIMAL:
+				// no TLVs
+				break;
+			}
+		} catch (IOException ignored) {
+		}
+
+		byte[] tlvBytes = tlvs.toByteArray();
+		body.write((byte) tlvBytes.length);
+		try {
+			body.write(tlvBytes);
+		} catch (IOException ignored) {
+		}
+
+		byte[] bodyBytes = body.toByteArray();
+		int len = bodyBytes.length;
+		bout.write((byte) len);
+		try {
+			bout.write(bodyBytes);
+		} catch (IOException ignored) {
+		}
+
+		byte lrc = computeLRC(bout.toByteArray());
+		bout.write(lrc & 0xFF);
+
+		return bout.toByteArray();
+	}
+
+	public static byte[] buildHostResponse(ContinueDecision decision, byte[] incomingPayload) {
+		ByteArrayOutputStream bout = new ByteArrayOutputStream();
+		bout.write(0x01); // NAD
+		bout.write(0x00); // PCB
+
+		ByteArrayOutputStream body = new ByteArrayOutputStream();
+		body.write(0xDE); // CLA
+		body.write(0xD2); // INS
+		body.write(0x00); // P1
+		body.write(0x00); // P2
+
+		ByteArrayOutputStream tlvs = new ByteArrayOutputStream();
+
+		try {
+			switch (decision) {
+			case DECLINE:
+				// 8A Authorization response code – decline 05 00
+				tlvs.write(0x8A);
+				tlvs.write(0x02);
+				tlvs.write(0x05);
+				tlvs.write(0x00);
+				break;
+			case APPROVE_OFFLINE:
+				tlvs.write(0x8A);
+				tlvs.write(0x02);
+				tlvs.write(0x30);
+				tlvs.write(0x30);
 				byte[] iad = hexStringToBytes("11223344556677889900");
 				tlvs.write(0x91);
 				tlvs.write(iad.length);
@@ -458,40 +610,40 @@ public class VIPAClient {
 
 		return bout.toByteArray();
 	}
-	
-    public static String extractC4ToC5String(byte[] commandRx) throws IOException {
-        if (commandRx == null) {
-            throw new IllegalArgumentException("Input byte array cannot be null");
-        }
-        
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        boolean foundC4 = false;
-        boolean foundC5 = false;
-        
-        for (int i = 0; i < commandRx.length && !foundC5; i++) {
-            byte b = commandRx[i];
-            
-            if (foundC4) {
-                if (b == (byte) 0xC5) {
-                    foundC5 = true;
-                } else {
-                    buffer.write(b);
-                }
-            } else if (b == (byte) 0xC4) {
-                foundC4 = true;
-            }
-        }
-        
-        if (!foundC4) {
-            throw new IOException("C4 marker not found in byte array");
-        }
-        
-        if (!foundC5) {
-            throw new IOException("C5 marker not found in byte array");
-        }
-        
-        return buffer.toString("UTF-8");
-    }
+
+	public static String extractC4ToC5String(byte[] commandRx) throws IOException {
+		if (commandRx == null) {
+			throw new IllegalArgumentException("Input byte array cannot be null");
+		}
+
+		ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+		boolean foundC4 = false;
+		boolean foundC5 = false;
+
+		for (int i = 0; i < commandRx.length && !foundC5; i++) {
+			byte b = commandRx[i];
+
+			if (foundC4) {
+				if (b == (byte) 0xC5) {
+					foundC5 = true;
+				} else {
+					buffer.write(b);
+				}
+			} else if (b == (byte) 0xC4) {
+				foundC4 = true;
+			}
+		}
+
+		if (!foundC4) {
+			throw new IOException("C4 marker not found in byte array");
+		}
+
+		if (!foundC5) {
+			throw new IOException("C5 marker not found in byte array");
+		}
+
+		return buffer.toString("UTF-8");
+	}
 
 	private static byte computeLRC(byte[] bytes) {
 		byte x = 0;
