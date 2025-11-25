@@ -489,11 +489,11 @@ public class VIPAClient {
 				tlvs.write(0x02);
 				tlvs.write(0x30);
 				tlvs.write(0x30);
-//				byte[] iad = hexStringToBytes("11223344556677889900");
-//				tlvs.write(0x91);
-//				tlvs.write(iad.length);
-//				tlvs.write(iad);
-				tlvs.write(incomingPayload);
+				byte[] iad = hexStringToBytes("1122334455667788");
+				tlvs.write(0x91);
+				tlvs.write(iad.length);
+				tlvs.write(iad);
+//				tlvs.write(incomingPayload);
 				break;
 			case APPROVE_ONLINE:
 				tlvs.write(0x8A);
